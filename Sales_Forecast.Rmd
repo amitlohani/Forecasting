@@ -1,0 +1,515 @@
+---
+title: "Tractor Sales Forecast"
+author: "Amit Lohani"
+date: "13 January 2018"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Overview of the Framework
+  **Step 0:** Problem Definition  
+  **Step 1:** Data Exploration  
+  **Step 2:** Stationarize the Series  
+  **Step 3:** Find Optimal Parameters  
+  **Step 4:** Build ARIMA Model  
+  **Step 5:** Check for White Noise  
+  **Step 6:** Investigate Test Error  
+  **Step 7:** Make Predictions  
+
+## Fundamental Idea
+The fundamental idea for time series analysis is to decompose the original time series (sales, stock market trends, etc.) into several independent components. Typically, business time series are divided into the following four components:  
+
+**Trend** - Overall direction of the series i.e. upwards, downwards etc.  
+**Seasonality** - Monthly or quarterly patterns. (e.g. the quarter, month, or day of the week)  
+**Cycle** - Long-term business cycles or pattern exists where the data exhibits rises and falls that are not of fixed period (duration usually of at least 2 years)  
+**Irregular remainder** - Random noise left after extraction of all the components  
+
+### Difference Between Seasonal & Cyclic
+**1.** Seasonal pattern constant length vs. cyclic pattern variable length  
+**2.** Average length of cycle longer than length of seasonal pattern  
+**3.** Magnitude of cycle more variable than magnitude of seasonal pattern. 
+
+The timing of peaks and troughs is predictable with seasonal data, but unpredictable in the long term with cyclic data.  
+
+
+## Prerequisites & Basic Setting
+```{r Basic Setting, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Add list of packages required
+list.of.packages <- c("sweep", "forecast", "tidyquant", "timetk", "urca", "sweep", "tseries")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+
+
+# Set working directory - change as per your current working directory
+# setwd("~/Time Series/Sales Forecast")
+
+  
+# Import packages
+library(sweep)
+library(forecast)
+library(tidyquant)
+library(urca) # For advance Dickey Full Test
+library(timetk)
+library(sweep)
+library(tseries) # Only use for adf.test
+```
+## Data Preparation
+```{r Data Preparation, warning=FALSE}
+# Import Data
+Sales_Data <- read.csv("Sales Data.csv", stringsAsFactors = F)
+  
+# Rename default column name to date and value
+Sales_Data <- Sales_Data %>%
+  select(Month.Year, Number.of.Tractor.Sold) %>%
+  rename(date = Month.Year, value = Number.of.Tractor.Sold)
+  
+Sales_Data_TS <- ts(Sales_Data$value, start = c(2003, 1), frequency = 12)
+# SALES_Data_Tbl <- tk_tbl(Sales_Data_TS, timetk_idx = FALSE, rename_index = "date")
+
+# convert date column to full date
+Sales_Data$date <- as.Date(time(Sales_Data_TS))
+
+# Convert to tibble - just to take benefit of advance feature of timetk package 
+# More info: http://www.business-science.io/code-tools/2017/10/24/demo_week_timetk.html
+Sales_Data <- tk_tbl(data = Sales_Data)
+
+# Check for timetk index
+# has_timetk_idx(Sales_Data_TS)
+  
+# Convert ts to tk_ts for timetk_idx and take benefit of advance feature of timetk package
+Sales_Data_TS <- tk_ts(Sales_Data, start = c(2003, 1), frequency = 12)
+
+
+# One way of splitting a time series is by using the window() function, which extracts a subset from #the object x observed between the times start and end.
+
+# window(x, start = NULL, end = NULL)
+
+
+# Splitting data into train and test
+# Sales_Data_TS_Train <- window(Sales_Data_TS, end = c(2012,12))
+Sales_Data_TS_Train <- tk_ts(Sales_Data[0:120, ], start = c(2003, 1), frequency = 12)
+Sales_Data_TS_Test <- tk_ts(Sales_Data[121:144, ], start = c(2013, 1), frequency = 12)
+```
+  
+  
+## Step 0: Problem Definition
+
+PowerHorse, a tractor and farm equipment manufacturing company, was established a few years after World War II. The company has shown a consistent growth in its revenue from tractor sales since its inception. However, over the years the company has struggled to keep it's inventory and production cost down because of variability in sales and tractor demand. The management at PowerHorse is under enormous pressure from the shareholders and board to reduce the production cost. Additionally, they are also interested in understanding the impact of their marketing and farmer connect efforts towards overall sales. In the same effort, they have hired you as a data science and predictive analytics consultant.
+
+You will start your investigation of this problem in the next part of this series using the concept discussed in this article. Eventually, you will develop an ARIMA model to forecast sale / demand for next year, to manage their inventories and suppliers.Additionally, you will also investigate the impact of marketing program on sales by using an exogenous variable ARIMA model.
+
+The following sections in this article represent your analysis in the form of a graphic guide.You could find the data at the following link [Tractor Sales Data](http://ucanalytics.com/blogs/wp-content/uploads/2015/06/Tractor-Sales.csv "PowerHorse Sales Data"). You may want to analyze this data to revalidate the analysis you will carry-out in the following sections.
+
+## Step 1: Data Exploration
+```{r Review Data}
+# Review Data
+Sales_Data %>%
+  tk_index() %>%
+  tk_get_timeseries_summary() %>%
+  glimpse()
+
+# Simple time plot
+autoplot(Sales_Data_TS, xlab = 'Year', ylab='Sale Volume')
+```
+```{r Summary}
+# Summary
+summary(Sales_Data_TS_Train)
+```
+```{r Data Split}
+# Data split on train and test
+ggplot(data=Sales_Data, aes(x = date, y = value)) + 
+  geom_line(col = palette_light()[1]) +
+  geom_point(col = palette_light()[1]) +
+  geom_rect(xmin = as.numeric(ymd("2013-01-01")),
+            xmax = as.numeric(ymd("2014-12-01")),
+            ymin = 0, ymax = 8000,
+            fill = palette_light()[[4]], alpha = 0.01) +
+  annotate("text", x = ymd("2007-12-01"), y = 800,
+           color = palette_light()[[1]], label = "Train Region") +
+  annotate("text", x = ymd("2013-12-01"), y = 300,
+           color = palette_light()[[1]], label = "Test Region") + 
+  geom_point(alpha = 0.5, color = palette_light()[[1]]) +
+  labs(
+    title = "Tractor Sales Distributed Across the Spectrum", 
+    x = "Year", 
+    y="Sale Volume") +
+  theme_tq()
+```
+```{r Sale Volume}
+# Volume of tractor sales distributed across the spectrum
+Sales_Data %>%
+  ggplot(aes(date, value)) +
+  geom_line(col = palette_light()[1]) +
+  geom_point(col = palette_light()[1]) +
+  geom_ma(ma_fun = SMA, n = 12, size = 1, color = "red") +
+  geom_smooth(method='lm') +
+  theme_tq() +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+  labs(title = "Tractor Sales Distributed Across the Spectrum",
+       x = "Year",
+       y = "Sale Volume")
+```
+
+From the above plot you can find the increasing trend in the data.  
+
+Red dotted line shows the moving average is increasing over time.  
+
+Blue line shows the best fit line that is based on simple linear regression.  
+
+
+### Some Simple Forecasting Method
+Sometimes one of these simple methods will be the best forecasting method available; but in many cases, these methods will serve as benchmarks rather than the method of choice. That is, any forecasting methods we develop will be compared to these simple methods to ensure that the new method is better than these simple alternatives. If not, the new method is not worth considering.  
+
+```{r Simple Forecast}
+# Plot some forecasts
+autoplot(Sales_Data_TS) +
+  forecast::autolayer(meanf(Sales_Data_TS_Train, h=24)$mean, series="Mean") +
+  forecast::autolayer(naive(Sales_Data_TS_Train, h=24)$mean, series="Naïve") +
+  forecast::autolayer(snaive(Sales_Data_TS_Train, h=24)$mean, series="Seasonal naïve") +
+  ggtitle("Forecasts for Monthly Tractor Sales ") +
+  xlab("Year") + ylab("Sale Volume") +
+  guides(colour=guide_legend(title="Forecast"))
+
+# h is the forecast horizon
+```
+
+You can check and compare the above simple forecasts with actual data before moving to the more advanced ARIMA model. We can use it as a baseline in our analysis.  
+
+### Seasonal plots
+Along with time plots, there are other useful ways of plotting data to emphasize seasonal patterns and show changes in these patterns over time.
+
+A **seasonal plot** is similar to a time plot except that the data are plotted against the individual "seasons" in which the data were observed. You can create one using the **ggseasonplot()** function the same way you do with autoplot().  
+
+An interesting variant of a season plot uses polar coordinates, where the time axis is circular rather than horizontal; to make one, simply add a **polar** argument and set it to **TRUE**.  
+
+A **subseries plot** comprises mini time plots for each season. Here, the mean for each season is shown as a blue horizontal line.  
+
+
+```{r Seasonal plot}
+## Cycle across the years
+# cycle(Sales_Data_TS_Train)
+    
+# Sense of Seasonal effect
+boxplot(Sales_Data_TS_Train~cycle(Sales_Data_TS_Train), xlab = c("Month Wise Distribution"), ylab = c("Sale Volume"))
+title("Tractor Sales Seasonal Effect")
+
+# Some more plots for illustration
+# par(mfrow = c(1,3))
+ggseasonplot(Sales_Data_TS_Train) +
+  ylab("Sale") + ggtitle("Seasonal Plot: Tractor Sales")
+
+ggseasonplot(Sales_Data_TS_Train, polar = T) + 
+  ylab("Sale") + ggtitle("Polar Seasonal Plot: Tractor Sales")
+
+ggsubseriesplot(Sales_Data_TS_Train) + 
+  ylab("Sale") + ggtitle("Seasonal Subseries Plot: Tractor Sales")
+```
+
+It is clear from above illustrations that there are large jumps in sale in the mnths of July, August and December.  
+
+
+```{r Lag Plot}
+gglagplot(as.numeric(Sales_Data_TS_Train)) +
+  ylab("Sale") + ggtitle("Lag Plot: Tractor Sales")
+
+ggAcf(Sales_Data_TS_Train, lag.max = 48) +
+  ggtitle("ACF Plot: Tractor Sales")
+```
+
+The slow decrease in the ACF as the lags increase is due to the trend, while the Ã¢ÂÂscallopedÃ¢ÂÂ shape is due the seasonality. Again, there peaks above the dotted blue line and this shows the series has information in it and it is not White Noise.  
+
+
+```{r Full Decompose}
+# Full decompose
+autoplot(stl(ts(Sales_Data$value[0:120], start = c(2003, 1), frequency = 12), s.window = 'periodic'))
+```
+
+## My Observation
+**1.** There is a trend component which grows the sales year by year  
+**2.** There looks to be a seasonal component which has a cycle less than 12 months  
+**3.** The variance in the data keeps on increasing with time  
+**4.** In the above data, a cyclic pattern seems to be non-existent since the unit we are analysing is a relatively new unit to notice business cycles. Also, we observe a overall increasing trend across years. We will build our model based on the following function: **Yt=f(Trendt,Seasonalityt,Remaindert)**
+
+## Step 2: Stationarize the Series
+We know that we need to address two issues before we test stationary series.  
+**1.** We need to remove unequal variances. We do this using log of the series.  
+**2.** We need to address the trend component. We do this by taking difference of the series.  
+
+Now, let's test the resultant series.  
+
+The test results comprise of a Test Statistic and some Critical Values for difference confidence levels. If the 'Test Statistic' is less than the 'Critical Value', we can reject the null hypothesis and say that the series is stationary.  
+
+```{r adf.test, warning=FALSE}
+# Null hypothesis testing of stationarity
+adf.test(Sales_Data_TS_Train, alternative = "stationary", k=0)
+adf.test(diff(Sales_Data_TS_Train, 1), alternative = "stationary", k=0)
+```
+
+We're not getting expected p-value from adf.test, we're trying get that with more advance Dickey Fuller test for stationarity from 'urca' package.
+
+```{r ur.df, warning=FALSE}
+# Null hypothesis testing of stationarity
+summary(ur.df(Sales_Data_TS_Train))
+summary(ur.df(diff(Sales_Data_TS_Train)))
+```
+
+Alternatively we can check non-stationarity test as well.
+
+```{r kpss.test, warning=FALSE}
+# Null hypothesis testing of non-stationarity
+kpss.test(Sales_Data_TS_Train)
+kpss.test(diff(Sales_Data_TS_Train, 1))
+```
+
+Though the variation in standard deviation is small, rolling mean is clearly increasing with time and this is not a stationary series. Also, the test statistic is way more than the critical values.
+
+From above test we can assume that our time series data is not stationary. Make the series stationary by removing the upward trend through 1st order differencing of the series. 
+
+Difference data to make data stationary on mean (remove trend)  
+
+```{r diff}
+# ndiffs(Sales_Data_TS) - we can use ndiffs as well, but I don't have much knowledge on its accuracy.
+autoplot(diff(Sales_Data_TS_Train), xlab = 'Year', ylab='First Level Differenced (Tractor Sales)')
+```
+
+Okay so the above series is not stationary on variance i.e. variation in the plot is increasing as we move towards the right of the chart. We need to make the series stationary on variance to produce reliable forecasts through ARIMA models.  
+
+### Transformations for Variance Stablization
+The purpose of transformations is to simplify the patterns in the historical data by removing known sources of variation or by making the pattern more consistent across the whole data set.  
+
+Here we've a function **BoxCox.lamda()** from forecast package which will guide us about the mathematical transformation of the time series data. It will return the lambda value **(λ)** and its range is from **-1>=λ>=1**.
+
+**λ=1:** No substantive transformation  
+**λ=1/2:** Square root plus linear trasnformation  
+**λ=1/3:** Cube root plus linear trasnformation  
+**λ=0:** Natural logarithmic transformation  
+**λ=-1:** Inverse transformation  
+
+
+```{r BoxCox Transformation}
+BoxCox.lambda(Sales_Data_TS_Train)
+```
+
+Here **λ = -0.2291694** is close to 0 so we will go with natural log transformation.  
+
+
+```{r Log Transform}
+# log transform data to make data stationary on variance
+Sales_Data_TS_Train_Log <- log10(Sales_Data_TS_Train)
+Sales_Data_TS_Test_Log <- log10(Sales_Data_TS_Test)
+```
+
+Now check the result after log transformation.  
+
+
+```{r}
+par(mfrow = c(1,2))
+autoplot(Sales_Data_TS_Train_Log, xlab = 'Year', ylab='Log Transformed (Tractor Sales)')
+autoplot(diff(Sales_Data_TS_Train_Log), xlab = 'Year', ylab='Differenced Log (Tractor Sales)')
+```
+
+Yes, now this series looks stationary on both mean and variance. This also gives us the clue that I or integrated part of our ARIMA model will be equal to 1 as 1st difference is making the series stationary.  
+
+## Step 3: Find Optimal Parameters
+Now, let us create autocorrelation factor (ACF) and partial autocorrelation factor (PACF) plots to identify patterns in the above data which is stationary on both mean and variance. The idea is to identify presence of AR and MA components in the residuals.
+  
+```{r ACF Plots, warning=FALSE}
+  # ACF Model 
+  par(mfrow = c(1,2))
+  ggAcf(ts(diff(Sales_Data_TS_Train_Log))) + ggtitle("ACF Tractor Sales")
+  ggPacf(ts(diff(Sales_Data_TS_Train_Log))) + ggtitle("PACF Tractor Sales")
+```
+
+Since, there are enough spikes in the plots outside the insignificant zone (dotted horizontal lines) we can conclude that the residuals are not random. This implies that there is information available in residuals to be extracted by AR and MA models. Also, there is a seasonal component available in the residuals at the lag 12 (represented by spikes at lag 12). This makes sense since we are analyzing monthly data that tends to have seasonality of 12 months because of patterns in tractor sales.  
+
+auto.arima function in forecast package in R helps us identify the best fit ARIMA model on the fly.  
+
+```{r auto.arima}
+# ARIMAfit = auto.arima(Sales_Data_TS_Log, approximation=FALSE,trace=FALSE)
+summary(auto.arima(Sales_Data_TS_Train_Log, approximation=FALSE,trace=FALSE))
+```
+
+The best fit model is selected based on Akaike Information Criterion (AIC), and Bayesian Information Criterion (BIC) values. The idea is to choose a model with minimum AIC and BIC values.  
+
+As expected, our model has I (or integrated) component equal to 1. This represents differencing of order 1. There is additional differencing of lag 12 in the above best fit model. Moreover, the best fit model has MA value of order 1. Also, there is seasonal MA with lag 12 of order 1.  
+
+## Step 4: Build ARIMA Model
+```{r Bulid Arima}
+# ARIMA(0,1,1)(0,1,1)[12]
+fit = Arima(Sales_Data_TS_Train_Log, order = c(0, 1, 1), seasonal = list(order = c(0, 1, 1), period = 12))
+```
+
+## Step 5: Check for White Noise
+Plot ACF and PACF for residuals of ARIMA model to ensure no more information is left for extraction.  
+```{r Residual Plots}
+# par(mfrow=c(1,2))
+ggAcf(ts(fit$residuals)) + ggtitle("ACF Residual")
+ggPacf(ts(fit$residuals)) + ggtitle("PACF Residual")
+```
+
+Inspite of diagnosing residuals separately we can use a **checkresiduals** function to do our task. It uses Ljung-Box test.  
+
+```{r Residual Diagnostics}
+# Residual Diagnostics
+checkresiduals(fit)
+```
+
+### Few Assumptions from Residual Diagnostics
+
+**1.** Here, **p-value > 0.05** threshold in time plot shows that residuals are White Noise  
+**2.** More than 95% of values are under blue dotted line in ACF plot shows no information is left in residuals and no problem with autocorrelation  
+**3.** Histogram looks pretty close to normal distribution or normal curve  
+
+
+```{r sw_tidy}
+# sw_tidy - Get model coefficients
+sw_tidy(fit)
+```
+
+```{r sw_glance}
+# sw_glance - Get model description and training set accuracy measures
+sw_glance(fit) %>%
+  glimpse()
+```
+
+```{r sw_augment}
+# sw_augment - get model residuals
+sw_augment(fit, timetk_idx = TRUE)
+```
+
+```{r Residual Plot for any Pattern}
+# Plotting residuals to check whether any pattern is left
+sw_augment(fit, timetk_idx = TRUE) %>%
+  ggplot(aes(x = index, y = .resid)) +
+  geom_point() + 
+  geom_hline(yintercept = 0, color = "red") + 
+  labs(title = "Residual diagnostic") +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+  theme_tq()
+```
+
+## Step 6: Investigate Test Error
+```{r Forecast}
+# Forecast next 24 months
+fcast_arima <- forecast(fit, h = 24)
+
+fcast_arima
+
+# Reconvert the log10 value to normal
+fcast_arima$mean<-10^(fcast_arima$mean)
+fcast_arima$upper<-10^(fcast_arima$upper)
+fcast_arima$lower<-10^(fcast_arima$lower)
+fcast_arima$x<-10^(fcast_arima$x)
+
+fcast_arima
+
+class(fcast_arima)
+
+# Again checking residuals of forecast
+checkresiduals(fcast_arima)
+```
+
+```{r Check Object}
+# Check if object has timetk index 
+has_timetk_idx(fcast_arima)
+```
+
+```{r Forecast Table}
+# sw_sweep - tidies forecast output
+fcast_tbl <- sw_sweep(fcast_arima, timetk_idx = TRUE)
+head(fcast_tbl)
+tail(fcast_tbl)
+```
+
+```{r Log to Antilog}
+# # Taking antilog of base 10
+# fcast_tbl[,3:7] <- 10^fcast_tbl[,3:7]
+  
+actual_tbl <- Sales_Data[121:144,]
+```
+
+```{r Visualize Forecast}
+# Visualize the forecast with ggplot
+fcast_tbl %>%
+  ggplot(aes(x = index, y = value, color = key)) +
+  # 95% CI
+  geom_ribbon(aes(ymin = lo.95, ymax = hi.95), 
+              fill = "#D5DBFF", color = NA, size = 0) +
+  # 80% CI
+  geom_ribbon(aes(ymin = lo.80, ymax = hi.80, fill = key), 
+              fill = "#596DD5", color = NA, size = 0, alpha = 0.8) +
+  # Prediction
+  geom_line() +
+  geom_point() +
+  # Actuals
+  geom_line(aes(x = date, y = value), color = palette_light()[[1]], data = actual_tbl) +
+  geom_point(aes(x = date, y = value), color = palette_light()[[1]], data = actual_tbl) +
+  # Aesthetics
+  labs(title = "Tractor Sales Forecast: ARIMA", x = "", y = "Sale Volume",
+       subtitle = "sw_sweep tidies the auto.arima() forecast output") +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+  scale_color_tq() +
+  scale_fill_tq() +
+  theme_tq()
+```
+
+```{r Test Error}
+# Investigate test error 
+error_tbl <- left_join(actual_tbl, fcast_tbl, by = c("date" = "index")) %>%
+  rename(actual = value.x, pred = value.y) %>%
+  select(date, actual, pred) %>%
+  mutate(
+    error     = actual - pred,
+    error_pct = error / actual
+  ) 
+error_tbl
+```
+
+```{r Calculate Error Metrics}
+# Calculate test error metrics
+test_residuals <- error_tbl$error
+test_error_pct <- error_tbl$error_pct * 100 # Percentage error
+
+me   <- mean(test_residuals, na.rm=TRUE)
+rmse <- mean(test_residuals^2, na.rm=TRUE)^0.5
+mae  <- mean(abs(test_residuals), na.rm=TRUE)
+mape <- mean(abs(test_error_pct), na.rm=TRUE)
+mpe  <- mean(test_error_pct, na.rm=TRUE)
+
+tibble(me, rmse, mae, mape, mpe) %>% glimpse()
+```
+
+Alternatively, you can use accuracy() function to check accuracy of your forecast.  
+
+
+```{r accuracy}
+# Check accuracy
+round(accuracy(fcast_arima, Sales_Data_TS), 3)
+```
+
+
+## Step 7: Make Predictions
+```{r}
+plot(fcast_arima)
+```
+
+## Conclusion
+I hope this will help you to deal with time series forecasting using ARIMA. It is great learning experience to while doing this analysis and I tried my best to bring togegher all the logic need to focus while dealing with forecasting problem. Also, I would like to thank some great people whose writings help me alot to understand the core concepts of forecasting: Rob J Hyndman and George Athanasopoulos, Kunal Jain, Roopam Upadhyay and Matt Dancho.  
+
+
+### References: 
+[Forecasting: Principles and Practice](http://otexts.org/fpp2/)  
+[A Complete Tutorial on Time Series Modeling in R](https://www.analyticsvidhya.com/blog/2015/12/complete-tutorial-time-series-modeling/)
+[You CANalytics](http://ucanalytics.com/blogs/step-by-step-graphic-guide-to-forecasting-through-arima-modeling-in-r-manufacturing-case-study-example/)  
+[Business-Science: TIDY FORECASTING WITH SWEEP](http://www.business-science.io/code-tools/2017/10/25/demo_week_sweep.html)  
+
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+
