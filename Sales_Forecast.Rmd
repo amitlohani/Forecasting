@@ -222,7 +222,7 @@ ggAcf(Sales_Data_TS_Train, lag.max = 48) +
   ggtitle("ACF Plot: Tractor Sales")
 ```
 
-The slow decrease in the ACF as the lags increase is due to the trend, while the Ã¢ÂÂscallopedÃ¢ÂÂ shape is due the seasonality. Again, there peaks above the dotted blue line and this shows the series has information in it and it is not White Noise.  
+The slow decrease in the ACF as the lags increase is due to the trend, while the scalloped shape is due the seasonality. Again, there peaks above the dotted blue line and this shows the series has information in it and it is not White Noise.  
 
 
 ```{r Full Decompose}
