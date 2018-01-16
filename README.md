@@ -15,11 +15,12 @@ You will start your investigation of this problem in the next part of this serie
 
 ## Fundamental Idea
 The fundamental idea for time series analysis is to decompose the original time series (sales, stock market trends, etc.) into several independent components. Typically, business time series are divided into the following four components:
-Trend - Overall direction of the series i.e. upwards, downwards etc.
-Seasonality - Monthly or quarterly patterns. (e.g. the quarter, month, or day of the week)
-Cycle - Long-term business cycles or pattern exists where the data exhibits rises and falls that are not of fixed period (duration usually of at least 2 years)
-Irregular remainder - Random noise left after extraction of all the components
-Difference Between Seasonal & Cyclic
+**Trend** - Overall direction of the series i.e. upwards, downwards etc.  
+**Seasonality** - Monthly or quarterly patterns. (e.g. the quarter, month, or day of the week)  
+**Cycle** - Long-term business cycles or pattern exists where the data exhibits rises and falls that are not of fixed period (duration usually of at least 2 years)  
+**Irregular remainder** - Random noise left after extraction of all the components  
+
+### Difference Between Seasonal & Cyclic
 1. Seasonal pattern constant length vs. cyclic pattern variable length
 2. Average length of cycle longer than length of seasonal pattern
 3. Magnitude of cycle more variable than magnitude of seasonal pattern.
