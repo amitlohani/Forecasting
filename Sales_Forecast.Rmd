@@ -1,6 +1,6 @@
 ---
 title: "Tractor Sales Forecast"
-author: "Amit Lohani"
+author: "Amit Kumar"
 date: "13 January 2018"
 output:
   html_document: default
