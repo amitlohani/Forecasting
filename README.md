@@ -13,7 +13,7 @@ PowerHorse, a tractor and farm equipment manufacturing company, was established 
 **Step 7:** Make Predictions  
 
 ## Fundamental Idea
-The fundamental idea for time series analysis is to decompose the original time series (sales, stock market trends, etc.) into several independent components. Typically, business time series are divided into the following four components:
+The fundamental idea for time series analysis is to decompose the original time series (sales, stock market trends, etc.) into several independent components. Typically, business time series are divided into the following four components:  
 **Trend** - Overall direction of the series i.e. upwards, downwards etc.  
 **Seasonality** - Monthly or quarterly patterns. (e.g. the quarter, month, or day of the week)  
 **Cycle** - Long-term business cycles or pattern exists where the data exhibits rises and falls that are not of fixed period (duration usually of at least 2 years)  
